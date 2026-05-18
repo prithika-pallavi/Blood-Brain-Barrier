@@ -129,6 +129,8 @@ pip install pandas numpy scikit-learn rdkit
 * BBB permeability prediction
 * Computational chemistry research
 
+##ALSO CAN USE EXTRA DATA FROM GIVEN EXCEL SHEET NAMED DATA
+
 ---
 
 ## Repository Topics
