@@ -1,0 +1,138 @@
+import pandas as pd
+import numpy as np
+
+from rdkit import Chem, DataStructs
+from rdkit.Chem import rdFingerprintGenerator
+from rdkit.Chem import Descriptors, Crippen, Lipinski, rdMolDescriptors
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, roc_auc_score
+
+
+# -------------------------------
+# 1. Morgan Fingerprint Generator
+# -------------------------------
+fp_generator = rdFingerprintGenerator.GetMorganGenerator(
+    radius=2,
+    fpSize=1024
+)
+
+
+# -------------------------------
+# 2. Feature Engineering Function
+# -------------------------------
+def smiles_to_features(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+
+    # Fingerprint
+    bit_vect = fp_generator.GetFingerprint(mol)
+    fp = np.zeros((1024,), dtype=np.int8)
+    DataStructs.ConvertToNumpyArray(bit_vect, fp)
+
+    # Physicochemical descriptors
+    descriptors = np.array([
+        Descriptors.MolWt(mol),                    # Molecular weight
+        Crippen.MolLogP(mol),                      # LogP
+        rdMolDescriptors.CalcTPSA(mol),            # TPSA
+        Lipinski.NumHDonors(mol),                  # HBD
+        Lipinski.NumHAcceptors(mol)                # HBA
+    ])
+
+    return np.concatenate([fp, descriptors])
+
+
+# -------------------------------
+# 3. Mock Dataset 
+# -------------------------------
+data = {
+    'smiles': [
+        'CC(=O)OC1=CC=CC=C1C(=O)O',                 # Aspirin
+        'CN1C=NC2=C1C(=O)N(C(=O)N2C)C',             # Caffeine
+        'C(C1C(C(C(C(O1)O)O)O)O)O',                 # Glucose
+        'CN1C(=O)CN=C(C2=C1C=CC(=C2)Cl)C3=CC=CC=C3', # Diazepam
+        'CC(C)NCC(O)COc1ccccc1O',                   # Propranolol
+        'CCOC(=O)C1=CC=CC=C1Cl'                     # Example BBB-
+    ],
+    'bbb_status': [1, 1, 0, 1, 1, 0]
+}
+
+df = pd.DataFrame(data)
+
+
+# -------------------------------
+# 4. Generate Features
+# -------------------------------
+df['features'] = df['smiles'].apply(smiles_to_features)
+df = df.dropna()
+
+X = np.stack(df['features'].values)
+y = df['bbb_status'].values
+
+
+# -------------------------------
+# 5. Train/Test Split
+# -------------------------------
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.25,
+    stratify=y,
+    random_state=42
+)
+
+
+# -------------------------------
+# 6. Model
+# -------------------------------
+clf = RandomForestClassifier(
+    n_estimators=300,
+    max_depth=20,
+    class_weight="balanced",
+    random_state=42,
+    n_jobs=-1
+)
+
+clf.fit(X_train, y_train)
+
+
+# -------------------------------
+# 7. Evaluation
+# -------------------------------
+y_pred = clf.predict(X_test)
+y_prob = clf.predict_proba(X_test)[:, 1]
+
+print("\nModel Performance")
+print("-----------------")
+print("Accuracy :", accuracy_score(y_test, y_pred))
+print("ROC-AUC  :", roc_auc_score(y_test, y_prob))
+
+
+# -------------------------------
+# 8. Prediction Function
+# -------------------------------
+def predict_bbb(smiles_string):
+    features = smiles_to_features(smiles_string)
+
+    if features is None:
+        return "Invalid SMILES"
+
+    prediction = clf.predict([features])[0]
+    probability = clf.predict_proba([features])[0][1]
+
+    status = "Permeable (BBB+)" if prediction == 1 else "Non-permeable (BBB-)"
+
+    return (
+        f"\nMolecule : {smiles_string}\n"
+        f"Prediction: {status}\n"
+        f"Confidence: {probability:.2%}"
+    )
+
+
+# -------------------------------
+# 9. Example Prediction
+# -------------------------------
+test_smiles = "N[S](=O)(=O)c1cc(ccc1Cl)C2(O)NC(=O)c3ccccc23"  # sulfonamide
+print(predict_bbb(test_smiles))
